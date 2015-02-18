@@ -1,0 +1,111 @@
+---
+title: "Practical Machine Learning Peer Assessment"
+author: "Anna Korsakova Bain"
+date: "Monday, February 16, 2015"
+output: html_document
+---
+
+For this analysis, I will be using data and research performed on six participants using personal fitness trackers [1]. I will use this data to create a model to predict how well these participants performed the exercise, specifically barbell lifts, captured during the experiment.
+
+##Data Processing and Exploratory Analysis
+###Data Download
+
+A cursory look at the dataset shows blank, NA, and Div/0 errors in some of its values. When downloading and loading the data, I can save some cleanup time by loading these values as NA.
+
+```{r}
+  library(caret)
+  library(ggplot2)
+  library(randomForest)
+
+  set.seed(131313)
+
+  setwd("~/DataScienceCertificiation/MachineLearning")
+
+  #check if files exist, if they do then read, if not then download
+  if (file.exists("pml-training.csv")) {
+    training <- read.csv("pml-training.csv", header = TRUE,  na.strings=c("NA","NaN", " ", "", "#DIV/0!"))
+  } else {
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="pml-training.csv", mode='wb' )
+    training <- read.csv("pml-training.csv", header = TRUE, na.strings=c("NA","NaN", " ", "", "#DIV/0!"))
+  }
+
+  if (file.exists("pml-testing.csv")) {
+    validation <- read.csv("pml-testing.csv", header = TRUE,  na.strings=c("NA","NaN", " ", "", "#DIV/0!"))
+  } else {
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile="pml-testing.csv", mode='wb' )
+    validation <- read.csv("pml-testing.csv", header = TRUE, na.strings=c("NA","NaN", " ", "", "#DIV/0!") )
+  }
+```
+
+###Exploratory Data Analysis
+In order to understand the data and begin to establish which predictors we should be looking at in our model, I will perform some exploratory data analysis and data cleanup. 
+
+In reading the experiment study design [1], I can see that it makes sense to remove all rows where new_window = Yes, since those are summary rows. I will also remove all columns that only have NA values.
+
+```{r}
+  training <- subset(training, new_window == "no")
+
+  ##remove NA values
+  training <- Filter(function(x)!all(is.na(x)), training)
+  dim(training)
+```
+To complete the creation of our tidy dataset, I will remove zero covariates using the nearZeroVar function. Also, I will remove the X, date/time, window, and user columns.
+
+
+```{r}
+  nsv <- nearZeroVar(training, saveMetrics=TRUE)
+  nsv[nsv$nzv == TRUE, ]
+  
+  colsToRemove <-  c("X", "user_name", "raw_timestamp_part_1","raw_timestamp_part_2", "cvtd_timestamp","new_window","num_window")
+  
+  training <- training[,!(names(training) %in% colsToRemove)] 
+```
+
+I now have a tidy dataset of 53 variables and 19,216 observations, including the outcome variable- classe. 
+
+###Preprocessing for highly correlated predictors
+In order to find highly correlated predictors, that may cause bias in my model, I will run the correlation analysis with a cut-off of 95%. I will then remove these columns from our training dataset.
+
+```{r}
+  M <- abs(cor(training[,-53]))
+  diag(M) <- 0
+  corr.columns <- which(M > 0.95, arr.ind=T)
+  clean.training <- training[-unique(corr.columns[,1])]
+```
+
+### Data Slicing
+In order to perform some cross validation, I will split the training dataset into a training and test set (70%/30%). The pml-testing.csv dataset downloaded above will be used for validation.
+
+```{r}
+  inTrain <- createDataPartition(y=training$classe, p=0.75, list=FALSE) 
+  training <-training[inTrain,] 
+  testing <- training[-inTrain,]
+```
+
+##Model Creation
+In order to predict the classe outcome, I will use the random forest method, because it is a widely used and highly accurate method for prediction. Another benefit of using this method, is that it inherently takes care of cross validation and creates an unbiased estimate of the test set error [2].
+
+
+```{r, echo=FALSE}
+  modelFit <- randomForest(classe ~ . , data=training, prox=TRUE)
+  modelFit
+```
+
+As the confusion matrix and model write-up shows, the OOB estimate, or the internal error estimate of the random forest cross validation, is 0.48%, which seems reasonably low. I will now look at how well my model does against the testing dataset.
+
+```{r}
+  pred <- predict(modelFit, testing)
+  testing$predRight <- pred==testing$classe
+  table(pred,testing$classe)   
+```
+
+The model gets 100% accuracy against the testing set.
+
+## References
+
+1.Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises#ixzz3S3fzc6NM
+
+2. Random Forests, Leo Breiman and Adele Cutler 
+https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm
